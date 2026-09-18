@@ -1,4 +1,6 @@
 import os
+import json
+
 from dotenv import load_dotenv
 
 import chromadb
@@ -135,6 +137,7 @@ def search_knowledge_base(query: str) -> str:
     retrieved_documents = results["documents"][0]
 
     if not retrieved_documents:
+
         return "NO_INFORMATION_FOUND"
 
     output = []
@@ -152,144 +155,223 @@ def search_knowledge_base(query: str) -> str:
 
 
 # ==========================================
-# 7. TOOL DECLARATION
+# 7. CONTEXT EVALUATOR
 # ==========================================
 
-search_tool = types.FunctionDeclaration(
-    name="search_knowledge_base",
-    description=(
-        "Search the internal knowledge base "
-        "using semantic vector search. "
-        "Use this tool when the user asks "
-        "about RAG, Agentic RAG, Python, "
-        "Machine Learning, Deep Learning, "
-        "or Vector Databases."
-    ),
-    parameters=types.Schema(
-        type="OBJECT",
-        properties={
-            "query": types.Schema(
-                type="STRING",
-                description=(
-                    "The search query to use "
-                    "for finding relevant information."
-                )
-            )
-        },
-        required=["query"]
-    )
-)
+def evaluate_context(
+    question: str,
+    context: str
+) -> str:
 
+    prompt = f"""
+You are a retrieval evaluator.
 
-# ==========================================
-# 8. TOOL
-# ==========================================
+User Question:
+{question}
 
-search_tool_config = types.Tool(
-    function_declarations=[
-        search_tool
-    ]
-)
+Retrieved Context:
+{context}
 
+Determine whether the retrieved context
+contains enough information to answer
+the user's question.
 
-# ==========================================
-# 9. AGENT
-# ==========================================
+Return ONLY valid JSON.
 
-def ask_agent(question: str):
+Format:
+
+{{
+    "decision": "ENOUGH"
+}}
+
+or
+
+{{
+    "decision": "NOT_ENOUGH"
+}}
+"""
 
     response = client.models.generate_content(
         model="gemini-3.6-flash",
-
-        contents=question,
-
-        config=types.GenerateContentConfig(
-            tools=[
-                search_tool_config
-            ]
-        )
+        contents=prompt
     )
 
-    return response
+    try:
+
+        result = json.loads(
+            response.text
+        )
+
+        return result["decision"]
+
+    except Exception:
+
+        return "NOT_ENOUGH"
 
 
 # ==========================================
-# 10. FUNCTION CALL EXECUTION
+# 8. GENERATE BETTER QUERY
+# ==========================================
+
+def generate_better_query(
+    question: str,
+    context: str
+) -> str:
+
+    prompt = f"""
+Create a better search query for a
+knowledge base.
+
+Original Question:
+{question}
+
+Previous Retrieved Context:
+{context}
+
+Return ONLY the improved search query.
+Do not add explanations.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt
+    )
+
+    return response.text.strip()
+
+
+# ==========================================
+# 9. AGENTIC RETRIEVAL
+# ==========================================
+
+def agentic_retrieve(
+    question: str
+) -> str:
+
+    current_query = question
+
+    for attempt in range(3):
+
+        print(
+            f"\nRetrieval Attempt: {attempt + 1}"
+        )
+
+        print(
+            f"Search Query: {current_query}"
+        )
+
+        # ------------------------------
+        # Search
+        # ------------------------------
+
+        context = search_knowledge_base(
+            current_query
+        )
+
+        print(
+            "\nContext Retrieved:"
+        )
+
+        print(context)
+
+        # ------------------------------
+        # Evaluate
+        # ------------------------------
+
+        decision = evaluate_context(
+            question,
+            context
+        )
+
+        print(
+            f"\nContext Evaluation: "
+            f"{decision}"
+        )
+
+        # ------------------------------
+        # Enough?
+        # ------------------------------
+
+        if decision == "ENOUGH":
+
+            print(
+                "\nAgent decided that "
+                "context is sufficient."
+            )
+
+            return context
+
+        # ------------------------------
+        # Need better search
+        # ------------------------------
+
+        print(
+            "\nAgent decided that "
+            "context is insufficient."
+        )
+
+        current_query = generate_better_query(
+            question,
+            context
+        )
+
+    return context
+
+
+# ==========================================
+# 10. FINAL ANSWER
+# ==========================================
+
+def generate_answer(
+    question: str,
+    context: str
+) -> str:
+
+    prompt = f"""
+Answer the user's question using
+the retrieved context.
+
+User Question:
+{question}
+
+Retrieved Context:
+{context}
+
+Give a clear and accurate answer.
+
+If the context does not contain enough
+information, say that the information
+is not available in the knowledge base.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt
+    )
+
+    return response.text
+
+
+# ==========================================
+# 11. MAIN AGENT
 # ==========================================
 
 def run_agent(question: str):
 
-    response = ask_agent(question)
-
-    # --------------------------------------
-    # Check whether Gemini requested a tool
-    # --------------------------------------
-
-    if not response.function_calls:
-
-        return response.text
-
-    # --------------------------------------
-    # Get the first function call
-    # --------------------------------------
-
-    function_call = response.function_calls[0]
-
-    function_name = function_call.name
-    function_args = function_call.args
-
-    print(
-        f"\nTool Called: {function_name}"
+    context = agentic_retrieve(
+        question
     )
 
-    print(
-        f"Tool Arguments: {function_args}"
+    answer = generate_answer(
+        question,
+        context
     )
 
-    # --------------------------------------
-    # Execute our Python function
-    # --------------------------------------
-
-    if function_name == "search_knowledge_base":
-
-        tool_result = search_knowledge_base(
-            function_args["query"]
-        )
-
-    else:
-
-        tool_result = "Unknown tool."
-
-    # --------------------------------------
-    # Send tool result back to Gemini
-    # --------------------------------------
-
-    final_response = client.models.generate_content(
-        model="gemini-3.6-flash",
-
-        contents=[
-            question,
-            response.candidates[0].content,
-            types.Part.from_function_response(
-                name=function_name,
-                response={
-                    "result": tool_result
-                }
-            )
-        ],
-
-        config=types.GenerateContentConfig(
-            tools=[
-                search_tool_config
-            ]
-        )
-    )
-
-    return final_response.text
+    return answer
 
 
 # ==========================================
-# 11. RUN
+# 12. RUN
 # ==========================================
 
 if __name__ == "__main__":
@@ -303,7 +385,7 @@ if __name__ == "__main__":
     )
 
     print(
-        "\nAgent:"
+        "\n========== FINAL ANSWER =========="
     )
 
     print(answer)
