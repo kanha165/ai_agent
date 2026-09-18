@@ -315,7 +315,7 @@ def agentic_retrieve(
 # 10. FINAL ANSWER
 # ==========================================
 
-dedef generate_answer(
+def generate_answer(
     question: str,
     context: str
 ) -> str:
