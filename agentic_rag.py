@@ -157,7 +157,6 @@ def search_knowledge_base(query: str) -> str:
 # ==========================================
 # 7. CONTEXT EVALUATOR
 # ==========================================
-
 def evaluate_context(
     question: str,
     context: str
@@ -176,43 +175,34 @@ Determine whether the retrieved context
 contains enough information to answer
 the user's question.
 
-Return ONLY valid JSON.
+Return ONLY one word:
 
-Format:
-
-{{
-    "decision": "ENOUGH"
-}}
+ENOUGH
 
 or
 
-{{
-    "decision": "NOT_ENOUGH"
-}}
+NOT_ENOUGH
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
     )
 
-    try:
+    response = chat.send_message(
+        message=prompt
+    )
 
-        result = json.loads(
-            response.text
-        )
+    decision = response.text.strip().upper()
 
-        return result["decision"]
+    if "ENOUGH" in decision:
+        return "ENOUGH"
 
-    except Exception:
-
-        return "NOT_ENOUGH"
+    return "NOT_ENOUGH"
 
 
 # ==========================================
 # 8. GENERATE BETTER QUERY
 # ==========================================
-
 def generate_better_query(
     question: str,
     context: str
@@ -232,9 +222,12 @@ Return ONLY the improved search query.
 Do not add explanations.
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
+    )
+
+    response = chat.send_message(
+        message=prompt
     )
 
     return response.text.strip()
@@ -322,7 +315,7 @@ def agentic_retrieve(
 # 10. FINAL ANSWER
 # ==========================================
 
-def generate_answer(
+dedef generate_answer(
     question: str,
     context: str
 ) -> str:
@@ -344,9 +337,12 @@ information, say that the information
 is not available in the knowledge base.
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
+    )
+
+    response = chat.send_message(
+        message=prompt
     )
 
     return response.text
