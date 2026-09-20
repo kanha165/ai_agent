@@ -1,12 +1,10 @@
 import os
-import json
 
 from dotenv import load_dotenv
 
 import chromadb
 from sentence_transformers import SentenceTransformer
 from google import genai
-from google.genai import types
 
 
 # ==========================================
@@ -155,31 +153,49 @@ def search_knowledge_base(query: str) -> str:
 
 
 # ==========================================
-# 7. CONTEXT EVALUATOR
+# 7. STRICT CONTEXT EVALUATOR
 # ==========================================
+
 def evaluate_context(
     question: str,
     context: str
 ) -> str:
 
     prompt = f"""
-You are a retrieval evaluator.
+You are a strict retrieval evaluator.
 
-User Question:
+Your job is to determine whether the
+retrieved context actually contains
+information that can answer the user's
+question.
+
+USER QUESTION:
 {question}
 
-Retrieved Context:
+RETRIEVED CONTEXT:
 {context}
 
-Determine whether the retrieved context
-contains enough information to answer
-the user's question.
+Rules:
 
-Return ONLY one word:
+1. Return ENOUGH only if the context
+   directly contains relevant information
+   needed to answer the question.
+
+2. If the documents are about a different
+   topic, return NOT_ENOUGH.
+
+3. Do not use your general knowledge.
+
+4. Do not assume missing information.
+
+5. If the question is about blockchain and
+   the documents only discuss Python,
+   Machine Learning or Deep Learning,
+   return NOT_ENOUGH.
+
+6. Return ONLY one of these two values:
 
 ENOUGH
-
-or
 
 NOT_ENOUGH
 """
@@ -194,7 +210,13 @@ NOT_ENOUGH
 
     decision = response.text.strip().upper()
 
-    if "ENOUGH" in decision:
+    print(
+        f"\nRaw Evaluator Response: "
+        f"{decision}"
+    )
+
+    if decision == "ENOUGH":
+
         return "ENOUGH"
 
     return "NOT_ENOUGH"
@@ -203,23 +225,32 @@ NOT_ENOUGH
 # ==========================================
 # 8. GENERATE BETTER QUERY
 # ==========================================
+
 def generate_better_query(
     question: str,
     context: str
 ) -> str:
 
     prompt = f"""
-Create a better search query for a
-knowledge base.
+You are a search query optimizer.
 
-Original Question:
+The user's question is:
+
 {question}
 
-Previous Retrieved Context:
+The previous retrieved context was:
+
 {context}
 
+The previous search did not provide
+enough relevant information.
+
+Create a more precise search query
+that could find information specifically
+related to the user's question.
+
 Return ONLY the improved search query.
-Do not add explanations.
+Do not explain anything.
 """
 
     chat = client.chats.create(
@@ -253,9 +284,9 @@ def agentic_retrieve(
             f"Search Query: {current_query}"
         )
 
-        # ------------------------------
+        # ----------------------------------
         # Search
-        # ------------------------------
+        # ----------------------------------
 
         context = search_knowledge_base(
             current_query
@@ -267,9 +298,9 @@ def agentic_retrieve(
 
         print(context)
 
-        # ------------------------------
+        # ----------------------------------
         # Evaluate
-        # ------------------------------
+        # ----------------------------------
 
         decision = evaluate_context(
             question,
@@ -281,9 +312,9 @@ def agentic_retrieve(
             f"{decision}"
         )
 
-        # ------------------------------
-        # Enough?
-        # ------------------------------
+        # ----------------------------------
+        # Context is enough
+        # ----------------------------------
 
         if decision == "ENOUGH":
 
@@ -294,18 +325,40 @@ def agentic_retrieve(
 
             return context
 
-        # ------------------------------
-        # Need better search
-        # ------------------------------
+        # ----------------------------------
+        # Context is NOT enough
+        # ----------------------------------
 
         print(
             "\nAgent decided that "
             "context is insufficient."
         )
 
+        # ----------------------------------
+        # Last attempt
+        # ----------------------------------
+
+        if attempt == 2:
+
+            print(
+                "\nMaximum retrieval attempts "
+                "reached."
+            )
+
+            return context
+
+        # ----------------------------------
+        # Generate better query
+        # ----------------------------------
+
         current_query = generate_better_query(
             question,
             context
+        )
+
+        print(
+            f"\nImproved Query: "
+            f"{current_query}"
         )
 
     return context
@@ -315,27 +368,28 @@ def agentic_retrieve(
 # 10. FINAL ANSWER
 # ==========================================
 
-
 def generate_answer(
     question: str,
     context: str
 ) -> str:
 
     prompt = f"""
-Answer the user's question using
+Answer the user's question using ONLY
 the retrieved context.
 
-User Question:
+USER QUESTION:
 {question}
 
-Retrieved Context:
+RETRIEVED CONTEXT:
 {context}
 
-Give a clear and accurate answer.
+Rules:
 
-If the context does not contain enough
-information, say that the information
-is not available in the knowledge base.
+- Do not use outside knowledge.
+- Do not invent information.
+- If the context does not contain the
+  answer, clearly say that the information
+  is not available in the knowledge base.
 """
 
     chat = client.chats.create(
@@ -353,7 +407,9 @@ is not available in the knowledge base.
 # 11. MAIN AGENT
 # ==========================================
 
-def run_agent(question: str):
+def run_agent(
+    question: str
+) -> str:
 
     context = agentic_retrieve(
         question
