@@ -41,7 +41,7 @@ collection = chroma_client.get_or_create_collection(
 
 
 # ==========================================
-# 4. DOCUMENT DATA
+# 4. DOCUMENTS
 # ==========================================
 
 documents = [
@@ -90,7 +90,7 @@ documents = [
 
 
 # ==========================================
-# 5. DOCUMENT METADATA
+# 5. METADATA
 # ==========================================
 
 metadatas = [
@@ -134,7 +134,7 @@ metadatas = [
 if collection.count() == 0:
 
     print(
-        "\nCreating documents with metadata..."
+        "\nCreating documents..."
     )
 
     embeddings = embedding_model.encode(
@@ -237,23 +237,14 @@ def search_knowledge_base(
 
 
 # ==========================================
-# 8. TEST SEARCH
+# 8. FORMAT CONTEXT
 # ==========================================
 
-if __name__ == "__main__":
+def format_context(
+    results
+):
 
-    query = input(
-        "\nEnter search query: "
-    )
-
-    results = search_knowledge_base(
-        query
-    )
-
-
-    print(
-        "\n========== SEARCH RESULTS =========="
-    )
+    context_parts = []
 
 
     for i, result in enumerate(
@@ -261,24 +252,145 @@ if __name__ == "__main__":
         start=1
     ):
 
-        print(
-            f"\nDOCUMENT {i}"
+        context_parts.append(
+            f"""
+DOCUMENT {i}
+
+Topic:
+{result['topic']}
+
+Source:
+{result['source']}
+
+Content:
+{result['document']}
+"""
         )
 
-        print(
-            f"Topic  : {result['topic']}"
+
+    return "\n".join(
+        context_parts
+    )
+
+
+# ==========================================
+# 9. GENERATE ANSWER
+# ==========================================
+
+def generate_answer(
+    question: str,
+    results
+):
+
+    context = format_context(
+        results
+    )
+
+
+    prompt = f"""
+You are a RAG assistant.
+
+Answer the user's question using ONLY
+the retrieved context.
+
+USER QUESTION:
+{question}
+
+RETRIEVED CONTEXT:
+{context}
+
+Rules:
+
+1. Do not use outside knowledge.
+
+2. Do not invent information.
+
+3. If the context does not contain
+   enough information, say:
+   "Information not available in
+   the knowledge base."
+
+4. After the answer, provide the
+   sources used.
+
+Use this format:
+
+ANSWER:
+<answer>
+
+SOURCES:
+- <source>
+- <source>
+"""
+
+
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
+    )
+
+    response = chat.send_message(
+        message=prompt
+    )
+
+    return response.text
+
+
+# ==========================================
+# 10. MAIN RAG SYSTEM
+# ==========================================
+
+def run_rag(
+    question: str
+):
+
+    print(
+        "\nSearching knowledge base..."
+    )
+
+
+    results = search_knowledge_base(
+        question
+    )
+
+
+    if not results:
+
+        return (
+            "Information not available "
+            "in the knowledge base."
         )
 
-        print(
-            f"Source : {result['source']}"
-        )
 
-        print(
-            f"Distance: "
-            f"{result['distance']:.4f}"
-        )
+    print(
+        f"Retrieved {len(results)} documents."
+    )
 
-        print(
-            f"\nContent:\n"
-            f"{result['document']}"
-        )
+
+    answer = generate_answer(
+        question,
+        results
+    )
+
+
+    return answer
+
+
+# ==========================================
+# 11. RUN
+# ==========================================
+
+if __name__ == "__main__":
+
+    question = input(
+        "\nYou: "
+    )
+
+    answer = run_rag(
+        question
+    )
+
+    print(
+        "\n========== FINAL ANSWER =========="
+    )
+
+    print(answer)
