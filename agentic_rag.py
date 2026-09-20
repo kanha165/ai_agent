@@ -41,7 +41,7 @@ collection = chroma_client.get_or_create_collection(
 
 
 # ==========================================
-# 4. DOCUMENTS
+# 4. KNOWLEDGE BASE
 # ==========================================
 
 documents = [
@@ -128,13 +128,13 @@ metadatas = [
 
 
 # ==========================================
-# 6. ADD DOCUMENTS
+# 6. INITIALIZE KNOWLEDGE BASE
 # ==========================================
 
 if collection.count() == 0:
 
     print(
-        "\nCreating documents..."
+        "\nCreating knowledge base..."
     )
 
     embeddings = embedding_model.encode(
@@ -155,13 +155,13 @@ if collection.count() == 0:
     )
 
     print(
-        "Documents added successfully."
+        "Knowledge base created."
     )
 
 else:
 
     print(
-        f"\nCollection already contains "
+        f"\nKnowledge base contains "
         f"{collection.count()} documents."
     )
 
@@ -180,6 +180,7 @@ def search_knowledge_base(
 
     results = collection.query(
         query_embeddings=[query_embedding],
+
         n_results=3,
 
         include=[
@@ -206,7 +207,7 @@ def search_knowledge_base(
         return []
 
 
-    results_list = []
+    search_results = []
 
 
     for document, metadata, distance in zip(
@@ -215,7 +216,7 @@ def search_knowledge_base(
         distances
     ):
 
-        results_list.append({
+        search_results.append({
 
             "document": document,
 
@@ -233,7 +234,7 @@ def search_knowledge_base(
         })
 
 
-    return results_list
+    return search_results
 
 
 # ==========================================
@@ -244,7 +245,7 @@ def format_context(
     results
 ):
 
-    context_parts = []
+    context = []
 
 
     for i, result in enumerate(
@@ -252,46 +253,36 @@ def format_context(
         start=1
     ):
 
-        context_parts.append(
+        context.append(
             f"""
 DOCUMENT {i}
 
-Topic:
+TOPIC:
 {result['topic']}
 
-Source:
+SOURCE:
 {result['source']}
 
-Content:
+CONTENT:
 {result['document']}
 """
         )
 
 
-    return "\n".join(
-        context_parts
-    )
+    return "\n".join(context)
 
 
 # ==========================================
-# 9. GENERATE ANSWER
+# 9. STRICT CONTEXT EVALUATION
 # ==========================================
 
-def generate_answer(
+def evaluate_context(
     question: str,
-    results
+    context: str
 ):
 
-    context = format_context(
-        results
-    )
-
-
     prompt = f"""
-You are a RAG assistant.
-
-Answer the user's question using ONLY
-the retrieved context.
+You are a strict RAG retrieval evaluator.
 
 USER QUESTION:
 {question}
@@ -299,21 +290,306 @@ USER QUESTION:
 RETRIEVED CONTEXT:
 {context}
 
+Determine whether the retrieved context
+actually contains enough relevant information
+to answer the user's question.
+
+Rules:
+
+1. Return ENOUGH only when the context
+   directly contains information needed
+   to answer the question.
+
+2. If the documents are about unrelated
+   topics, return NOT_ENOUGH.
+
+3. Do not use your own general knowledge.
+
+4. Do not assume missing information.
+
+5. If the user asks about blockchain and
+   the context only contains Python,
+   Machine Learning or Deep Learning,
+   return NOT_ENOUGH.
+
+Return ONLY:
+
+ENOUGH
+
+or
+
+NOT_ENOUGH
+"""
+
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
+    )
+
+    response = chat.send_message(
+        message=prompt
+    )
+
+    decision = response.text.strip().upper()
+
+    print(
+        f"\nEvaluator: {decision}"
+    )
+
+    if decision == "ENOUGH":
+
+        return "ENOUGH"
+
+    return "NOT_ENOUGH"
+
+
+# ==========================================
+# 10. GENERATE BETTER QUERY
+# ==========================================
+
+def generate_better_query(
+    question: str,
+    context: str
+):
+
+    prompt = f"""
+You are a search query optimizer.
+
+USER QUESTION:
+{question}
+
+PREVIOUS CONTEXT:
+{context}
+
+The previous search did not return
+enough relevant information.
+
+Create a more precise search query
+for the knowledge base.
+
+Focus directly on the user's question.
+
+Return ONLY the improved search query.
+"""
+
+    chat = client.chats.create(
+        model="gemini-3.6-flash"
+    )
+
+    response = chat.send_message(
+        message=prompt
+    )
+
+    return response.text.strip()
+
+
+# ==========================================
+# 11. AGENTIC RETRIEVAL
+# ==========================================
+
+def agentic_retrieve(
+    question: str
+):
+
+    current_query = question
+
+    last_results = []
+
+
+    for attempt in range(3):
+
+        print(
+            f"\n========== RETRIEVAL "
+            f"ATTEMPT {attempt + 1} =========="
+        )
+
+        print(
+            f"Search Query: {current_query}"
+        )
+
+
+        # ----------------------------------
+        # SEARCH
+        # ----------------------------------
+
+        results = search_knowledge_base(
+            current_query
+        )
+
+        last_results = results
+
+
+        if not results:
+
+            print(
+                "\nNo documents found."
+            )
+
+            return []
+
+
+        # ----------------------------------
+        # SHOW RESULTS
+        # ----------------------------------
+
+        print(
+            f"\nRetrieved {len(results)} "
+            f"documents."
+        )
+
+
+        for i, result in enumerate(
+            results,
+            start=1
+        ):
+
+            print(
+                f"\nDocument {i}"
+            )
+
+            print(
+                f"Topic: "
+                f"{result['topic']}"
+            )
+
+            print(
+                f"Source: "
+                f"{result['source']}"
+            )
+
+            print(
+                f"Distance: "
+                f"{result['distance']:.4f}"
+            )
+
+
+        # ----------------------------------
+        # FORMAT CONTEXT
+        # ----------------------------------
+
+        context = format_context(
+            results
+        )
+
+
+        # ----------------------------------
+        # EVALUATE
+        # ----------------------------------
+
+        decision = evaluate_context(
+            question,
+            context
+        )
+
+
+        # ----------------------------------
+        # ENOUGH
+        # ----------------------------------
+
+        if decision == "ENOUGH":
+
+            print(
+                "\nAgent decision:"
+                " Context is sufficient."
+            )
+
+            return results
+
+
+        # ----------------------------------
+        # NOT ENOUGH
+        # ----------------------------------
+
+        print(
+            "\nAgent decision:"
+            " Context is insufficient."
+        )
+
+
+        # ----------------------------------
+        # MAX ATTEMPTS
+        # ----------------------------------
+
+        if attempt == 2:
+
+            print(
+                "\nMaximum retrieval attempts "
+                "reached."
+            )
+
+            return last_results
+
+
+        # ----------------------------------
+        # BETTER QUERY
+        # ----------------------------------
+
+        current_query = generate_better_query(
+            question,
+            context
+        )
+
+        print(
+            f"\nImproved Query:"
+            f" {current_query}"
+        )
+
+
+    return last_results
+
+
+# ==========================================
+# 12. GENERATE FINAL ANSWER
+# ==========================================
+
+def generate_answer(
+    question: str,
+    results
+):
+
+    if not results:
+
+        return (
+            "Information not available "
+            "in the knowledge base."
+        )
+
+
+    context = format_context(
+        results
+    )
+
+
+    prompt = f"""
+You are a knowledge-base RAG assistant.
+
+USER QUESTION:
+{question}
+
+RETRIEVED CONTEXT:
+{context}
+
+Answer the question using ONLY the
+retrieved context.
+
 Rules:
 
 1. Do not use outside knowledge.
 
 2. Do not invent information.
 
-3. If the context does not contain
+3. Keep the answer clear and concise.
+
+4. If the context does not contain
    enough information, say:
-   "Information not available in
-   the knowledge base."
 
-4. After the answer, provide the
-   sources used.
+Information not available in the
+knowledge base.
 
-Use this format:
+After the answer, provide the sources
+that contain information used in
+the answer.
+
+Format:
 
 ANSWER:
 <answer>
@@ -336,33 +612,15 @@ SOURCES:
 
 
 # ==========================================
-# 10. MAIN RAG SYSTEM
+# 13. COMPLETE AGENT
 # ==========================================
 
-def run_rag(
+def run_agent(
     question: str
 ):
 
-    print(
-        "\nSearching knowledge base..."
-    )
-
-
-    results = search_knowledge_base(
+    results = agentic_retrieve(
         question
-    )
-
-
-    if not results:
-
-        return (
-            "Information not available "
-            "in the knowledge base."
-        )
-
-
-    print(
-        f"Retrieved {len(results)} documents."
     )
 
 
@@ -376,7 +634,7 @@ def run_rag(
 
 
 # ==========================================
-# 11. RUN
+# 14. RUN
 # ==========================================
 
 if __name__ == "__main__":
@@ -385,7 +643,7 @@ if __name__ == "__main__":
         "\nYou: "
     )
 
-    answer = run_rag(
+    answer = run_agent(
         question
     )
 
